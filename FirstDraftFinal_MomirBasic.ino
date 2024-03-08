@@ -119,6 +119,8 @@ void clearInput()
 {
   totalIn = 0;
   totalOut = 0;
+  printToMatrix(0, 1);
+  printToMatrix(0, 2);
 }
 
 int randomizeFromInput()
@@ -158,6 +160,7 @@ void inputNumeric(uint16_t inputValue)
 {
   if (totalIn < 1000 & totalIn > -1) 
     totalIn = (totalIn * 10) + inputValue;
+  printToMatrix(totalIn, 1);
 }
 
 String buildFileString(String path, String creatureID)

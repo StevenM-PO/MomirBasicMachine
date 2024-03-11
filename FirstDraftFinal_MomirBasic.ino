@@ -7,9 +7,12 @@
 #include <SD.h>
 #include "Adafruit_Thermal.h"
 #include "SoftwareSerial.h"
+#include "ButtonMatrix.h"
+
+using namespace RSys; //Button Matrix Dependencies
 
 #define TX_PIN 18 // Arduino transmit  YELLOW WIRE  labeled RX on PRINTER
-#define RX_PIN 17 // Arduino receive   GREEN WIRE   labeled TX on PRINTER
+#define RX_PIN 17 // Arduino receive   WHITE WIRE   labeled TX on PRINTER
 
 //Global variable declarations
 
@@ -25,11 +28,27 @@ String fileString;
 String recallPath;
 
 File root;
-//Constant global variable declarations
+
 const uint16_t numFiles[] = {28, 930};
 const int PWIDTH = 384;
 const int PHEIGHT = 535;
-const int BUTTON_ARRAY[] = {2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 22};
+const uint8_t BUTTON_COLUMNS = 4; /** Number of button matrix columns */
+const uint8_t BUTTON_ROWS = 4; /** Number of button matrix rows */
+uint8_t colPins[BUTTON_COLUMNS] = {5,4,3,2}; /** Button matrix column pins */
+uint8_t rowPins[BUTTON_ROWS] = {8, 9, 10, 11}; /** Button matrix row pins */
+
+RSys::Button buttons[BUTTON_ROWS][BUTTON_COLUMNS] = {
+    { (1), (2), (3), (12)   },
+    { (4), (5), (6), (13)   },
+    { (7), (8), (9), (14)   },
+    { (10), (0), (11), (15) }
+};
+
+ButtonMatrix BUTTON_MATRIX((Button*)buttons, rowPins, colPins, BUTTON_ROWS, BUTTON_COLUMNS);
+
+const uint16_t numberOfButtons = BUTTON_MATRIX.getNumButtons();
+
+/** Button matrix button definitons */
 
 Adafruit_7segment MATRIX_1 = Adafruit_7segment();
 Adafruit_7segment MATRIX_2 = Adafruit_7segment();
@@ -37,21 +56,18 @@ Adafruit_7segment MATRIX_2 = Adafruit_7segment();
 SoftwareSerial PRINTER_SERIAL(RX_PIN, TX_PIN); // Declare SoftwareSerial obj first
 Adafruit_Thermal PRINTER(&PRINTER_SERIAL);
 
-
-
-
-
+//Constant global variable declarations
 
 void setup() {
   // put your setup code here, to run once:
-  for (uint16_t n = 0; n < sizeof(BUTTON_ARRAY); n++)
-    pinMode(BUTTON_ARRAY[n], INPUT);
   Serial.begin(9600);
   PRINTER_SERIAL.begin(9600);
   PRINTER.begin();
   Serial.println("Serial Begin");
   MATRIX_1.begin(0x70);
+  Serial.println("Matrix1 Begin");
   MATRIX_2.begin(0x71);
+  Serial.println("Matrix2 Begin");
   MATRIX_1.println("1");
   MATRIX_2.println("2");
   MATRIX_1.writeDisplay();
@@ -62,11 +78,14 @@ void setup() {
   if (!SD.begin(53))
   {
     Serial.println("SD Failed to initialize!");
+
     while(1);
   }
   randomSeed(analogRead(0));
+
+  BUTTON_MATRIX.init();
 }
-0
+
 
 void loop() {
   // put your main code here, to run repeatedly:
@@ -76,45 +95,73 @@ void loop() {
 
 void buttonRead()
 {
-  for(uint16_t n = 0; n < 13; n++)
+  Button* pButton = NULL;
+  if (BUTTON_MATRIX.update())
   {
-    if(buttonState == HIGH)
-      {
-        switch (n)
+    for(uint16_t n = 0; n < numberOfButtons; n++)
+    {
+      pButton = BUTTON_MATRIX.getButton(n);
+      if(pButton->isPressed())
         {
-          case 10:
-            clearInput();
-            break;
+          Serial.println("Button Pressed");
+          uint16_t currentButton = pButton->getNumber();
+          switch (currentButton)
+          {
+            //Clear all input
+            case 10:
+              clearInput();
+              Serial.println("Case 10"); 
+              break;
 
-          case 11:
-            randomizeFromInput();
-            break;
+            //Calls randomizer without doing anything else. For debugging purposes.
+            case 11:
+              Serial.println("Case11");
+              randomizeFromInput();
+              break;
 
-          case 12:
-            recallPath = printRandomCardFromInput();
-            break;
-            
-          case 13:
-            sendPrintJob(recallPath);
+            //Call randomized print. Takes input as manavalue and returns 
+            //a random creature ID from the designated mana value folder.
+            case 12:
+              Serial.println("Case 12");
+              recallPath = printRandomCardFromInput();
+              break;
+              
+            case 13:
+              //Recalls last print job.
+              Serial.println("Case 13");
+              sendPrintJob(recallPath);
+              break;
 
-          case 14:
-            sendPrintJob(buildFileString(String(targetPrintMV), String(totalIn)));
+            case 14:
+              //Prints specific card by ID and mana value. Must input mana value with Button 15 first.
+              Serial.println("Case 14");
+              sendPrintJob(buildFileString(String(targetPrintMV), String(totalIn)));
+              break;
 
-          case 15:
-            targetPrintMV = totalIn;
-            clearInput();
+            case 15:
+              //Takes the current input and stores it as a mana value to print a specific ID from that mana values folder.
+              Serial.println("Case 15");
+              targetPrintMV = totalIn;
+              clearInput();
+              break;
 
-          default:
-            inputNumeric(n);        //MATRIX.println(totalIn);
+            default:
+              //Input for numbers 0-9, numerical input.
+              Serial.println("Case ");
+              Serial.print(currentButton);
+              inputNumeric(currentButton);
+              break;       //MATRIX.println(totalIn);
+          }
+          waitUntilButtonRelease(pButton); //Calls function to halt program flow until the current button is released. 
+          Serial.println("Total In = ");      //(cont.)Prevents an assortment of bugs and issues.
+          Serial.print(totalIn);
+          Serial.println("Selected Mana Value = ");
+          Serial.println(targetPrintMV);
         }
-        while(buttonState == HIGH)
-        {
-        buttonState = digitalRead(BUTTON_ARRAY[n]);
-        }
-      delay(100);
-      break;
-      }
+    }
+  
   }
+
 }
 
 void clearInput()
@@ -127,13 +174,14 @@ void clearInput()
 
 int randomizeFromInput()
 {
+  int randomValue;
   for (int x = 0; x < 50; x++)
   {
-    int randomValue = random(numFiles[totalIn]);
+    randomValue = random(numFiles[totalIn]);
     printToMatrix(randomValue, 2);
     delay(10);
-    return randomValue;
   }
+  return randomValue;
 }
 
 void printToMatrix(int value, int MatrixNumber)
@@ -142,8 +190,10 @@ void printToMatrix(int value, int MatrixNumber)
   {
     case 1:
       MATRIX_1.println(value);
+      break;
     case 2:
       MATRIX_2.println(value);
+      break;
   }
   MATRIX_1.writeDisplay();
   MATRIX_2.writeDisplay();
@@ -167,7 +217,7 @@ void inputNumeric(uint16_t inputValue)
 
 String buildFileString(String path, String creatureID)
 {
-  path = ("/" + String(totalIn) );
+  path = ("/" + String(path) );
   path = (path + "/");
   path = (path + creatureID);
   path += ".bin";
@@ -176,9 +226,18 @@ String buildFileString(String path, String creatureID)
 
 void sendPrintJob(String path)
 {
-  root = SD.open(path, FILE_READ);
-  PRINTER.printBitmap(PWIDTH, PHEIGHT, dynamic_cast<Stream*>(&root));
-  PRINTER.println(path);
-  PRINTER.feedRows(80);
-  root.close();
+    Serial.println(path);
+    if (!SD.exists(path))
+      return printToMatrix(8888, 1);
+    root = SD.open(path, FILE_READ);
+    PRINTER.printBitmap(PWIDTH, PHEIGHT, dynamic_cast<Stream*>(&root));
+    PRINTER.println(path);
+    PRINTER.feedRows(80);
+    root.close();
+}
+
+void waitUntilButtonRelease(Button* rButton)
+{
+  while(rButton->isPressed())
+    BUTTON_MATRIX.update();
 }
